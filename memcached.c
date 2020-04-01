@@ -1885,8 +1885,8 @@ static void process_bin_stat(conn *c) {
 
     if (nkey == 0) {
         /* request all statistics */
-        server_stats(&append_stats, c);
-        (void)get_stats(NULL, 0, &append_stats, c);
+        threadlocal_stats_aggregate_start(c, NULL);
+        return;
     } else if (strncmp(subcommand, "reset", 5) == 0) {
         stats_reset();
     } else if (strncmp(subcommand, "settings", 8) == 0) {
@@ -1914,6 +1914,10 @@ static void process_bin_stat(conn *c) {
             return;
         }
     } else {
+        if ( strcmp(subcommand, "items") == 0 || strcmp(subcommand, "slabs") == 0 ) {
+            threadlocal_stats_aggregate_start(c, subcommand);
+            return;
+        }
         if (get_stats(subcommand, nkey, &append_stats, c)) {
             if (c->stats.buffer == NULL) {
                 out_of_memory(c, "SERVER_ERROR Out of memory generating stats");
@@ -3090,10 +3094,8 @@ static void server_stats(ADD_STAT add_stats, conn *c) {
     pid_t pid = getpid();
     rel_time_t now = current_time;
 
-    struct thread_stats thread_stats;
-    threadlocal_stats_aggregate(&thread_stats);
     struct slab_stats slab_stats;
-    slab_stats_aggregate(&thread_stats, &slab_stats);
+    slab_stats_aggregate(&c->thread_stats, &slab_stats);
 #ifdef EXTSTORE
     struct extstore_stats st;
 #endif
@@ -3127,57 +3129,57 @@ static void server_stats(ADD_STAT add_stats, conn *c) {
         APPEND_STAT("rejected_connections", "%llu", (unsigned long long)stats.rejected_conns);
     }
     APPEND_STAT("connection_structures", "%u", stats_state.conn_structs);
-    APPEND_STAT("response_obj_bytes", "%llu", (unsigned long long)thread_stats.response_obj_bytes);
-    APPEND_STAT("response_obj_total", "%llu", (unsigned long long)thread_stats.response_obj_total);
-    APPEND_STAT("response_obj_free", "%llu", (unsigned long long)thread_stats.response_obj_free);
-    APPEND_STAT("response_obj_oom", "%llu", (unsigned long long)thread_stats.response_obj_oom);
-    APPEND_STAT("read_buf_bytes", "%llu", (unsigned long long)thread_stats.read_buf_bytes);
-    APPEND_STAT("read_buf_bytes_free", "%llu", (unsigned long long)thread_stats.read_buf_bytes_free);
-    APPEND_STAT("read_buf_oom", "%llu", (unsigned long long)thread_stats.read_buf_oom);
+    APPEND_STAT("response_obj_bytes", "%llu", (unsigned long long)c->thread_stats.response_obj_bytes);
+    APPEND_STAT("response_obj_total", "%llu", (unsigned long long)c->thread_stats.response_obj_total);
+    APPEND_STAT("response_obj_free", "%llu", (unsigned long long)c->thread_stats.response_obj_free);
+    APPEND_STAT("response_obj_oom", "%llu", (unsigned long long)c->thread_stats.response_obj_oom);
+    APPEND_STAT("read_buf_bytes", "%llu", (unsigned long long)c->thread_stats.read_buf_bytes);
+    APPEND_STAT("read_buf_bytes_free", "%llu", (unsigned long long)c->thread_stats.read_buf_bytes_free);
+    APPEND_STAT("read_buf_oom", "%llu", (unsigned long long)c->thread_stats.read_buf_oom);
     APPEND_STAT("reserved_fds", "%u", stats_state.reserved_fds);
-    APPEND_STAT("cmd_get", "%llu", (unsigned long long)thread_stats.get_cmds);
+    APPEND_STAT("cmd_get", "%llu", (unsigned long long)c->thread_stats.get_cmds);
     APPEND_STAT("cmd_set", "%llu", (unsigned long long)slab_stats.set_cmds);
-    APPEND_STAT("cmd_flush", "%llu", (unsigned long long)thread_stats.flush_cmds);
-    APPEND_STAT("cmd_touch", "%llu", (unsigned long long)thread_stats.touch_cmds);
-    APPEND_STAT("cmd_meta", "%llu", (unsigned long long)thread_stats.meta_cmds);
+    APPEND_STAT("cmd_flush", "%llu", (unsigned long long)c->thread_stats.flush_cmds);
+    APPEND_STAT("cmd_touch", "%llu", (unsigned long long)c->thread_stats.touch_cmds);
+    APPEND_STAT("cmd_meta", "%llu", (unsigned long long)c->thread_stats.meta_cmds);
     APPEND_STAT("get_hits", "%llu", (unsigned long long)slab_stats.get_hits);
-    APPEND_STAT("get_misses", "%llu", (unsigned long long)thread_stats.get_misses);
-    APPEND_STAT("get_expired", "%llu", (unsigned long long)thread_stats.get_expired);
-    APPEND_STAT("get_flushed", "%llu", (unsigned long long)thread_stats.get_flushed);
+    APPEND_STAT("get_misses", "%llu", (unsigned long long)c->thread_stats.get_misses);
+    APPEND_STAT("get_expired", "%llu", (unsigned long long)c->thread_stats.get_expired);
+    APPEND_STAT("get_flushed", "%llu", (unsigned long long)c->thread_stats.get_flushed);
 #ifdef EXTSTORE
     if (c->thread->storage) {
-        APPEND_STAT("get_extstore", "%llu", (unsigned long long)thread_stats.get_extstore);
-        APPEND_STAT("get_aborted_extstore", "%llu", (unsigned long long)thread_stats.get_aborted_extstore);
-        APPEND_STAT("get_oom_extstore", "%llu", (unsigned long long)thread_stats.get_oom_extstore);
-        APPEND_STAT("recache_from_extstore", "%llu", (unsigned long long)thread_stats.recache_from_extstore);
-        APPEND_STAT("miss_from_extstore", "%llu", (unsigned long long)thread_stats.miss_from_extstore);
-        APPEND_STAT("badcrc_from_extstore", "%llu", (unsigned long long)thread_stats.badcrc_from_extstore);
+        APPEND_STAT("get_extstore", "%llu", (unsigned long long)c->thread_stats.get_extstore);
+        APPEND_STAT("get_aborted_extstore", "%llu", (unsigned long long)c->thread_stats.get_aborted_extstore);
+        APPEND_STAT("get_oom_extstore", "%llu", (unsigned long long)c->thread_stats.get_oom_extstore);
+        APPEND_STAT("recache_from_extstore", "%llu", (unsigned long long)c->thread_stats.recache_from_extstore);
+        APPEND_STAT("miss_from_extstore", "%llu", (unsigned long long)c->thread_stats.miss_from_extstore);
+        APPEND_STAT("badcrc_from_extstore", "%llu", (unsigned long long)c->thread_stats.badcrc_from_extstore);
     }
 #endif
-    APPEND_STAT("delete_misses", "%llu", (unsigned long long)thread_stats.delete_misses);
+    APPEND_STAT("delete_misses", "%llu", (unsigned long long)c->thread_stats.delete_misses);
     APPEND_STAT("delete_hits", "%llu", (unsigned long long)slab_stats.delete_hits);
-    APPEND_STAT("incr_misses", "%llu", (unsigned long long)thread_stats.incr_misses);
+    APPEND_STAT("incr_misses", "%llu", (unsigned long long)c->thread_stats.incr_misses);
     APPEND_STAT("incr_hits", "%llu", (unsigned long long)slab_stats.incr_hits);
-    APPEND_STAT("decr_misses", "%llu", (unsigned long long)thread_stats.decr_misses);
+    APPEND_STAT("decr_misses", "%llu", (unsigned long long)c->thread_stats.decr_misses);
     APPEND_STAT("decr_hits", "%llu", (unsigned long long)slab_stats.decr_hits);
-    APPEND_STAT("cas_misses", "%llu", (unsigned long long)thread_stats.cas_misses);
+    APPEND_STAT("cas_misses", "%llu", (unsigned long long)c->thread_stats.cas_misses);
     APPEND_STAT("cas_hits", "%llu", (unsigned long long)slab_stats.cas_hits);
     APPEND_STAT("cas_badval", "%llu", (unsigned long long)slab_stats.cas_badval);
     APPEND_STAT("touch_hits", "%llu", (unsigned long long)slab_stats.touch_hits);
-    APPEND_STAT("touch_misses", "%llu", (unsigned long long)thread_stats.touch_misses);
-    APPEND_STAT("auth_cmds", "%llu", (unsigned long long)thread_stats.auth_cmds);
-    APPEND_STAT("auth_errors", "%llu", (unsigned long long)thread_stats.auth_errors);
+    APPEND_STAT("touch_misses", "%llu", (unsigned long long)c->thread_stats.touch_misses);
+    APPEND_STAT("auth_cmds", "%llu", (unsigned long long)c->thread_stats.auth_cmds);
+    APPEND_STAT("auth_errors", "%llu", (unsigned long long)c->thread_stats.auth_errors);
     if (settings.idle_timeout) {
-        APPEND_STAT("idle_kicks", "%llu", (unsigned long long)thread_stats.idle_kicks);
+        APPEND_STAT("idle_kicks", "%llu", (unsigned long long)c->thread_stats.idle_kicks);
     }
-    APPEND_STAT("bytes_read", "%llu", (unsigned long long)thread_stats.bytes_read);
-    APPEND_STAT("bytes_written", "%llu", (unsigned long long)thread_stats.bytes_written);
+    APPEND_STAT("bytes_read", "%llu", (unsigned long long)c->thread_stats.bytes_read);
+    APPEND_STAT("bytes_written", "%llu", (unsigned long long)c->thread_stats.bytes_written);
     APPEND_STAT("limit_maxbytes", "%llu", (unsigned long long)settings.maxbytes);
     APPEND_STAT("accepting_conns", "%u", stats_state.accepting_conns);
     APPEND_STAT("listen_disabled_num", "%llu", (unsigned long long)stats.listen_disabled_num);
     APPEND_STAT("time_in_listen_disabled_us", "%llu", stats.time_in_listen_disabled_us);
     APPEND_STAT("threads", "%d", settings.num_threads);
-    APPEND_STAT("conn_yields", "%llu", (unsigned long long)thread_stats.conn_yields);
+    APPEND_STAT("conn_yields", "%llu", (unsigned long long)c->thread_stats.conn_yields);
     APPEND_STAT("hash_power_level", "%u", stats_state.hash_power_level);
     APPEND_STAT("hash_bytes", "%llu", (unsigned long long)stats_state.hash_bytes);
     APPEND_STAT("hash_is_expanding", "%u", stats_state.hash_is_expanding);
@@ -3544,8 +3546,8 @@ static void process_stat(conn *c, token_t *tokens, const size_t ntokens) {
     }
 
     if (ntokens == 2) {
-        server_stats(&append_stats, c);
-        (void)get_stats(NULL, 0, &append_stats, c);
+        threadlocal_stats_aggregate_start(c, NULL);
+        return;
     } else if (strcmp(subcommand, "reset") == 0) {
         stats_reset();
         out_string(c, "RESET");
@@ -3595,6 +3597,10 @@ static void process_stat(conn *c, token_t *tokens, const size_t ntokens) {
         process_extstore_stats(&append_stats, c);
 #endif
     } else {
+        if ( strcmp(subcommand, "items") == 0 || strcmp(subcommand, "slabs") == 0 ) {
+            threadlocal_stats_aggregate_start(c, subcommand);
+            return;
+        }
         /* getting here means that the subcommand is either engine specific or
            is invalid. query the engine and see. */
         if (get_stats(subcommand, strlen(subcommand), &append_stats, c)) {
@@ -3619,6 +3625,36 @@ static void process_stat(conn *c, token_t *tokens, const size_t ntokens) {
         write_and_free(c, c->stats.buffer, c->stats.offset);
         c->stats.buffer = NULL;
     }
+}
+
+void process_stat_by_collected(conn *c) {
+    int len = c->next_sub_command ? strlen(c->next_sub_command) : 0;
+    if ( len == 0 )
+        server_stats(&append_stats, c);
+    (void)get_stats(c->next_sub_command, len, &append_stats, c);
+
+    append_stats(NULL, 0, NULL, 0, c);
+
+    if (c->stats.buffer == NULL) {                                   
+        out_of_memory(c, "SERVER_ERROR out of memory writing stats");
+    } else {                                                         
+        write_and_free(c, c->stats.buffer, c->stats.offset);         
+        c->stats.buffer = NULL;                                      
+    }
+
+    memset(&c->thread_stats, 0, sizeof(c->thread_stats));
+    c->thread_stats_result_count = 0;
+    free(c->next_sub_command);
+    c->next_sub_command = 0;
+
+    event_set(&c->event, c->sfd, c->ev_flags, event_handler, (void *)c);
+    event_base_set(c->thread->base, &c->event);
+    if (event_add(&c->event, 0) == -1) {
+        return;
+    }
+
+    drive_machine(c);
+
 }
 
 /* client flags == 0 means use no storage for client flags */

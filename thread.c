@@ -91,6 +91,8 @@ static pthread_cond_t init_cond;
 
 static void thread_libevent_process(int fd, short which, void *arg);
 
+static void threadlocal_stats_collect(struct thread_stats *stats, LIBEVENT_THREAD *thread);
+
 /* item_lock() must be held for an item before any modifications to either its
  * associated hash bucket, or the structure itself.
  * LRU modifications must hold the item lock, and the LRU lock.
@@ -582,6 +584,72 @@ static void thread_libevent_process(int fd, short which, void *arg) {
         }
         conn_worker_readd(conns[fd_from_pipe]);
         break;
+    /* collect local stats */
+    case 'l':
+        {
+            conn *c;
+            struct thread_stats stats;
+            char sbuf[1 + sizeof(c) + sizeof(stats)];
+            if (read(fd, &c, sizeof(c)) != sizeof(c)) {
+                if (settings.verbose > 0)
+                    fprintf(stderr, "Can't read redispatch fd from libevent pipe\n");
+                return;
+            }
+            
+            memset(&stats, 0, sizeof(stats));
+            threadlocal_stats_collect(&stats, me);
+            sbuf[0] = 'm';
+            memcpy(sbuf + 1, &c, sizeof(c));
+            memcpy(sbuf + + 1 + sizeof(c), &stats, sizeof(stats));
+            if (write(c->thread->notify_send_fd, sbuf, sizeof(sbuf)) != sizeof(sbuf)) {
+                perror("Writing to thread notify pipe");
+            }
+        }
+        break; 
+    case 'm':
+        {
+            conn *c;
+            int sid;
+            struct thread_stats stats;
+            if (read(fd, &c, sizeof(c)) != sizeof(c) || 
+                read(fd, &stats, sizeof(stats)) != sizeof(stats)) 
+            {
+                if (settings.verbose > 0)
+                    fprintf(stderr, "Can't read redispatch fd from libevent pipe\n");
+                return;
+            }
+
+#define X(name) c->thread_stats.name += stats.name;
+            THREAD_STATS_FIELDS
+#ifdef EXTSTORE
+            EXTSTORE_THREAD_STATS_FIELDS
+#endif
+#undef X
+
+            for (sid = 0; sid < MAX_NUMBER_OF_SLAB_CLASSES; sid++) {
+#define X(name) c->thread_stats.slab_stats[sid].name += \
+                    stats.slab_stats[sid].name;
+                SLAB_STATS_FIELDS
+#undef X
+            }
+
+            for (sid = 0; sid < POWER_LARGEST; sid++) {
+                c->thread_stats.lru_hits[sid] +=
+                    stats.lru_hits[sid];
+                c->thread_stats.slab_stats[CLEAR_LRU(sid)].get_hits +=
+                    stats.lru_hits[sid];
+            }
+
+            c->thread_stats.response_obj_bytes += stats.response_obj_bytes;
+            c->thread_stats.response_obj_total += stats.response_obj_total;
+            c->thread_stats.response_obj_free += stats.response_obj_free;
+            c->thread_stats.read_buf_bytes += stats.read_buf_bytes;
+            c->thread_stats.read_buf_bytes_free += stats.read_buf_bytes_free;
+            if ( ++c->thread_stats_result_count == settings.num_threads ) {
+                process_stat_by_collected(c);
+            }
+        }
+        break;
     /* asked to stop */
     case 's':
         event_base_loopexit(me->base, NULL);
@@ -850,6 +918,63 @@ void threadlocal_stats_aggregate(struct thread_stats *stats) {
         stats->read_buf_bytes_free += threads[ii].rbuf_cache->freecurr * READ_BUFFER_SIZE;
         pthread_mutex_unlock(&threads[ii].stats.mutex);
     }
+}
+
+#define LOCAL_STATS_MSG_SIZE (1 + sizeof(conn *))
+void threadlocal_stats_aggregate_start(conn *c, const char *subcmd) {
+    int ii;
+    memset(&c->thread_stats, 0, sizeof(c->thread_stats));
+    c->thread_stats_result_count = 0;
+    for (ii = 0; ii < settings.num_threads; ++ii) {
+        LIBEVENT_THREAD *thread = &threads[ii];
+        if ( thread == c->thread ) {
+            threadlocal_stats_collect(&c->thread_stats, thread);
+            ++c->thread_stats_result_count;
+        } else {
+            char buf[LOCAL_STATS_MSG_SIZE];
+            buf[0] = 'l';
+            memcpy(&buf[1], &c, sizeof(c));
+            if (write(thread->notify_send_fd, buf, sizeof(buf)) != sizeof(buf)) {
+                perror("Writing to thread notify pipe");
+            }
+        }
+    }
+
+    if ( subcmd )
+        c->next_sub_command = strdup(subcmd);
+
+    event_del(&c->event);
+    c->state = conn_watch;
+}
+
+static void threadlocal_stats_collect(struct thread_stats *stats, LIBEVENT_THREAD *thread) {
+    int sid;
+#define X(name) stats->name += thread->stats.name;
+    THREAD_STATS_FIELDS
+#ifdef EXTSTORE
+    EXTSTORE_THREAD_STATS_FIELDS
+#endif
+#undef X
+
+    for (sid = 0; sid < MAX_NUMBER_OF_SLAB_CLASSES; sid++) {
+#define X(name) stats->slab_stats[sid].name += \
+    thread->stats.slab_stats[sid].name;
+        SLAB_STATS_FIELDS
+#undef X
+    }
+
+    for (sid = 0; sid < POWER_LARGEST; sid++) {
+        stats->lru_hits[sid] +=
+            thread->stats.lru_hits[sid];
+        stats->slab_stats[CLEAR_LRU(sid)].get_hits +=
+            thread->stats.lru_hits[sid];
+    }
+
+    stats->response_obj_bytes += thread->resp_cache->total * sizeof(mc_resp);
+    stats->response_obj_total += thread->resp_cache->total;
+    stats->response_obj_free += thread->resp_cache->freecurr;
+    stats->read_buf_bytes += thread->rbuf_cache->total * READ_BUFFER_SIZE;
+    stats->read_buf_bytes_free += thread->rbuf_cache->freecurr * READ_BUFFER_SIZE;
 }
 
 void slab_stats_aggregate(struct thread_stats *stats, struct slab_stats *out) {

@@ -744,6 +744,10 @@ struct conn {
     ssize_t (*read)(conn  *c, void *buf, size_t count);
     ssize_t (*sendmsg)(conn *c, struct msghdr *msg, int flags);
     ssize_t (*write)(conn *c, void *buf, size_t count);
+
+    struct thread_stats thread_stats;
+    int thread_stats_result_count;
+    char *next_sub_command;
 };
 
 /* array of conn structures, indexed by file descriptor */
@@ -850,7 +854,10 @@ void STATS_UNLOCK(void);
 #define THR_STATS_UNLOCK(c) pthread_mutex_unlock(&c->thread->stats.mutex)
 void threadlocal_stats_reset(void);
 void threadlocal_stats_aggregate(struct thread_stats *stats);
+void threadlocal_stats_aggregate_start(conn *c, const char *subcmd);
 void slab_stats_aggregate(struct thread_stats *stats, struct slab_stats *out);
+
+void process_stat_by_collected(conn *c);
 
 /* Stat processing functions */
 void append_stat(const char *name, ADD_STAT add_stats, conn *c,
