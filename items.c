@@ -726,8 +726,7 @@ void item_stats_totals(ADD_STAT add_stats, void *c) {
 }
 
 void item_stats(ADD_STAT add_stats, void *c) {
-    struct thread_stats thread_stats;
-    threadlocal_stats_aggregate(&thread_stats);
+    struct thread_stats *thread_stats = &((struct conn*)c)->thread_stats;
     itemstats_t totals;
     int n;
     for (n = 0; n < MAX_NUMBER_OF_SLAB_CLASSES; n++) {
@@ -775,16 +774,16 @@ void item_stats(ADD_STAT add_stats, void *c) {
                 totals.evicted_time = itemstats[i].evicted_time;
             switch (lru_type_map[x]) {
                 case HOT_LRU:
-                    totals.hits_to_hot = thread_stats.lru_hits[i];
+                    totals.hits_to_hot = thread_stats->lru_hits[i];
                     break;
                 case WARM_LRU:
-                    totals.hits_to_warm = thread_stats.lru_hits[i];
+                    totals.hits_to_warm = thread_stats->lru_hits[i];
                     break;
                 case COLD_LRU:
-                    totals.hits_to_cold = thread_stats.lru_hits[i];
+                    totals.hits_to_cold = thread_stats->lru_hits[i];
                     break;
                 case TEMP_LRU:
-                    totals.hits_to_temp = thread_stats.lru_hits[i];
+                    totals.hits_to_temp = thread_stats->lru_hits[i];
                     break;
             }
             pthread_mutex_unlock(&lru_locks[i]);

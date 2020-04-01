@@ -544,8 +544,7 @@ unsigned int global_page_pool_size(bool *mem_flag) {
 static void do_slabs_stats(ADD_STAT add_stats, void *c) {
     int i, total;
     /* Get the per-thread stats which contain some interesting aggregates */
-    struct thread_stats thread_stats;
-    threadlocal_stats_aggregate(&thread_stats);
+    struct thread_stats *thread_stats = &((struct conn*)c)->thread_stats;
 
     total = 0;
     for(i = POWER_SMALLEST; i <= power_largest; i++) {
@@ -569,21 +568,21 @@ static void do_slabs_stats(ADD_STAT add_stats, void *c) {
             /* Stat is dead, but displaying zero instead of removing it. */
             APPEND_NUM_STAT(i, "free_chunks_end", "%u", 0);
             APPEND_NUM_STAT(i, "get_hits", "%llu",
-                    (unsigned long long)thread_stats.slab_stats[i].get_hits);
+                    (unsigned long long)thread_stats->slab_stats[i].get_hits);
             APPEND_NUM_STAT(i, "cmd_set", "%llu",
-                    (unsigned long long)thread_stats.slab_stats[i].set_cmds);
+                    (unsigned long long)thread_stats->slab_stats[i].set_cmds);
             APPEND_NUM_STAT(i, "delete_hits", "%llu",
-                    (unsigned long long)thread_stats.slab_stats[i].delete_hits);
+                    (unsigned long long)thread_stats->slab_stats[i].delete_hits);
             APPEND_NUM_STAT(i, "incr_hits", "%llu",
-                    (unsigned long long)thread_stats.slab_stats[i].incr_hits);
+                    (unsigned long long)thread_stats->slab_stats[i].incr_hits);
             APPEND_NUM_STAT(i, "decr_hits", "%llu",
-                    (unsigned long long)thread_stats.slab_stats[i].decr_hits);
+                    (unsigned long long)thread_stats->slab_stats[i].decr_hits);
             APPEND_NUM_STAT(i, "cas_hits", "%llu",
-                    (unsigned long long)thread_stats.slab_stats[i].cas_hits);
+                    (unsigned long long)thread_stats->slab_stats[i].cas_hits);
             APPEND_NUM_STAT(i, "cas_badval", "%llu",
-                    (unsigned long long)thread_stats.slab_stats[i].cas_badval);
+                    (unsigned long long)thread_stats->slab_stats[i].cas_badval);
             APPEND_NUM_STAT(i, "touch_hits", "%llu",
-                    (unsigned long long)thread_stats.slab_stats[i].touch_hits);
+                    (unsigned long long)thread_stats->slab_stats[i].touch_hits);
             total++;
         }
     }
